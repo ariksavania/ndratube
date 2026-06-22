@@ -16,6 +16,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabBtns = document.querySelectorAll('.tab-btn');
     const tabContents = document.querySelectorAll('.tab-content');
 
+    let currentUrl = '';
+
     // Tab Switching
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -32,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const url = urlInput.value.trim();
         if (!url) return;
 
+        currentUrl = url;
         btnText.classList.add('hidden');
         spinner.classList.remove('hidden');
         fetchBtn.disabled = true;
@@ -46,10 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.detail || 'Gagal mengambil data video.');
-            }
+            if (!response.ok) throw new Error(data.detail || 'Gagal mengambil data video.');
 
             renderResults(data);
 
@@ -66,25 +66,16 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderResults(data) {
         videoThumbnail.src = data.thumbnail;
         videoTitle.textContent = data.title;
-        videoDuration.textContent = data.duration;
+        videoDuration.textContent = data.duration || '';
 
         videoFormatsDiv.innerHTML = '';
         audioFormatsDiv.innerHTML = '';
 
-        const videoFormats = data.formats.filter(f => f.type === 'video').sort((a, b) => b.filesize - a.filesize);
-        const audioFormats = data.formats.filter(f => f.type === 'audio').sort((a, b) => b.abr - a.abr);
+        const videoFormats = data.formats.filter(f => f.type === 'video');
+        const audioFormats = data.formats.filter(f => f.type === 'audio');
 
-        if (videoFormats.length === 0) {
-            videoFormatsDiv.innerHTML = '<p style="color: var(--text-muted)">Tidak ada format video.</p>';
-        } else {
-            videoFormats.forEach(format => videoFormatsDiv.appendChild(createFormatCard(format)));
-        }
-
-        if (audioFormats.length === 0) {
-            audioFormatsDiv.innerHTML = '<p style="color: var(--text-muted)">Tidak ada format audio.</p>';
-        } else {
-            audioFormats.forEach(format => audioFormatsDiv.appendChild(createFormatCard(format)));
-        }
+        videoFormats.forEach(format => videoFormatsDiv.appendChild(createFormatCard(format)));
+        audioFormats.forEach(format => audioFormatsDiv.appendChild(createFormatCard(format)));
 
         resultsContainer.classList.remove('hidden');
     }
@@ -97,25 +88,41 @@ document.addEventListener('DOMContentLoaded', () => {
         const ext = (format.ext || 'mp4').toUpperCase();
 
         card.innerHTML = `
-            <div class="format-quality">${quality}</div>
+            <div class="format-quality">${quality || format.size_str}</div>
             <div class="format-details">${ext}</div>
             <div class="format-size">${format.size_str}</div>
-            <button class="download-btn">Download</button>
+            <button class="download-btn" id="dl-${format.format_id}">Download</button>
         `;
 
         const dwnBtn = card.querySelector('.download-btn');
-
-        // ✅ Use direct URL from API response (no second API call needed)
-        if (format.url) {
-            dwnBtn.addEventListener('click', () => {
-                window.open(format.url, '_blank');
-            });
-        } else {
-            // Fallback: disable button if no URL
-            dwnBtn.disabled = true;
-            dwnBtn.textContent = 'Tidak tersedia';
-        }
+        dwnBtn.addEventListener('click', () => handleDownload(dwnBtn, format.format_id, format.type));
 
         return card;
+    }
+
+    async function handleDownload(btn, formatId, type) {
+        const originalText = btn.textContent;
+        btn.textContent = 'Menyiapkan...';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: currentUrl, format_id: formatId, type })
+            });
+
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'Gagal mendapatkan link.');
+
+            // Open download URL in new tab
+            window.open(data.url, '_blank');
+
+        } catch (error) {
+            alert('❌ ' + error.message);
+        } finally {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
     }
 });
