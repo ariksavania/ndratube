@@ -9,32 +9,81 @@ function extractVideoId(url) {
   return match ? match[1] : null;
 }
 
-async function fetchYouTubeData(videoId) {
-  const res = await fetch(
-    'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip',
-        'X-Goog-Api-Format-Version': '2'
-      },
-      body: JSON.stringify({
-        videoId,
-        context: {
-          client: {
-            clientName: 'ANDROID',
-            clientVersion: '17.31.35',
-            androidSdkVersion: 30,
-            hl: 'en',
-            gl: 'US'
-          }
-        }
-      })
+// Try multiple YouTube clients - some work better from datacenter IPs
+const CLIENTS = [
+  {
+    name: 'TVHTML5',
+    payload: {
+      clientName: 'TVHTML5',
+      clientVersion: '7.20210224.00.00',
+      hl: 'en',
+      gl: 'US'
+    },
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 5.0) AppleWebKit/537.36 Chrome/79.0.3945.88 TV Safari/537.36',
+      'Origin': 'https://www.youtube.com',
+      'Referer': 'https://www.youtube.com/'
     }
-  );
-  if (!res.ok) throw new Error('Gagal menghubungi YouTube');
-  return res.json();
+  },
+  {
+    name: 'WEB',
+    payload: {
+      clientName: 'WEB',
+      clientVersion: '2.20231219.04.00',
+      hl: 'en',
+      gl: 'US'
+    },
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Origin': 'https://www.youtube.com',
+      'Referer': 'https://www.youtube.com/',
+      'X-YouTube-Client-Name': '1',
+      'X-YouTube-Client-Version': '2.20231219.04.00'
+    }
+  },
+  {
+    name: 'ANDROID',
+    payload: {
+      clientName: 'ANDROID',
+      clientVersion: '17.31.35',
+      androidSdkVersion: 30,
+      hl: 'en',
+      gl: 'US'
+    },
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip',
+      'X-Goog-Api-Format-Version': '2'
+    }
+  }
+];
+
+async function fetchYouTubeData(videoId) {
+  let lastError = '';
+  for (const client of CLIENTS) {
+    try {
+      const res = await fetch(
+        'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+        {
+          method: 'POST',
+          headers: client.headers,
+          body: JSON.stringify({
+            videoId,
+            context: { client: client.payload }
+          })
+        }
+      );
+      if (!res.ok) { lastError = `HTTP ${res.status}`; continue; }
+      const data = await res.json();
+      if (data.playabilityStatus?.status === 'OK') return data;
+      lastError = data.playabilityStatus?.reason || 'Video tidak tersedia';
+    } catch (e) {
+      lastError = e.message;
+    }
+  }
+  throw new Error(lastError || 'Semua metode gagal menghubungi YouTube');
 }
 
 function formatSize(bytes) {
@@ -64,32 +113,16 @@ export async function onRequestPost(context) {
     const body = await context.request.json();
     const { url } = body;
 
-    if (!url) {
-      return new Response(JSON.stringify({ detail: 'URL wajib diisi' }), {
-        status: 400, headers: corsHeaders
-      });
-    }
+    if (!url) return new Response(JSON.stringify({ detail: 'URL wajib diisi' }), { status: 400, headers: corsHeaders });
 
     const videoId = extractVideoId(url);
-    if (!videoId) {
-      return new Response(JSON.stringify({ detail: 'URL YouTube tidak valid' }), {
-        status: 400, headers: corsHeaders
-      });
-    }
+    if (!videoId) return new Response(JSON.stringify({ detail: 'URL YouTube tidak valid' }), { status: 400, headers: corsHeaders });
 
     const data = await fetchYouTubeData(videoId);
-
-    if (data.playabilityStatus?.status !== 'OK') {
-      return new Response(JSON.stringify({
-        detail: data.playabilityStatus?.reason || 'Video tidak tersedia'
-      }), { status: 400, headers: corsHeaders });
-    }
-
     const details = data.videoDetails;
     const thumbnail = details.thumbnail?.thumbnails?.slice(-1)[0]?.url || '';
     const formats = [];
 
-    // Combined video+audio formats
     for (const f of data.streamingData?.formats || []) {
       if (!f.url) continue;
       formats.push({
@@ -102,7 +135,6 @@ export async function onRequestPost(context) {
       });
     }
 
-    // Audio-only adaptive formats
     for (const f of data.streamingData?.adaptiveFormats || []) {
       if (!f.url || !f.mimeType?.includes('audio')) continue;
       formats.push({
@@ -115,19 +147,15 @@ export async function onRequestPost(context) {
       });
     }
 
-    const result = {
+    return new Response(JSON.stringify({
       title: details.title,
       thumbnail,
       duration: formatDuration(details.lengthSeconds),
       formats
-    };
-
-    return new Response(JSON.stringify(result), { status: 200, headers: corsHeaders });
+    }), { status: 200, headers: corsHeaders });
 
   } catch (err) {
-    return new Response(JSON.stringify({ detail: err.message }), {
-      status: 500, headers: corsHeaders
-    });
+    return new Response(JSON.stringify({ detail: err.message }), { status: 500, headers: corsHeaders });
   }
 }
 
