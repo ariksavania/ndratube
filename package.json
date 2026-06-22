@@ -1,0 +1,13 @@
+{
+  "name": "ndratube",
+  "version": "1.0.0",
+  "description": "Premium YouTube Downloader - NdraTube",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

@@ -1,0 +1,4 @@
+# Cloudflare Pages - Redirect Rules
+# Static files served from /static directory
+
+/*    /index.html   200
